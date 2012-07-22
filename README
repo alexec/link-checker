@@ -2,7 +2,7 @@ Link Checker
 ---
 This is a command line application. Example:
 
-% java -jar link-checker-1.0.0.jar
+% java -jar link-checker-1.0.0-jar-with-dependencies.jar
 http://www.alexecollins.com broken link to http://www.google.com/search?hl=en&q=allinurl%3Afile+java.sun.com&btnI=I%27m%20F</body></html>: java.net.URISyntaxException: Illegal character in query at index 80: http://www.google.com/search?hl=en&q=allinurl%3Afile+java.sun.com&btnI=I%27m%20F</body></html>
 http://www.alexecollins.com/ broken link to http://www.google.com/search?hl=en&q=allinurl%3Afile+java.sun.com&btnI=I%27m%20F</body></html>: java.net.URISyntaxException: Illegal character in query at index 80: http://www.google.com/search?hl=en&q=allinurl%3Afile+java.sun.com&btnI=I%27m%20F</body></html>
 http://www.alexecollins.com/?q=blogs/alex broken link to http://www.google.com/search?hl=en&q=allinurl%3Afile+java.sun.com&btnI=I%27m%20F</body></html>: java.net.URISyntaxException: Illegal character in query at index 80: http://www.google.com/search?hl=en&q=allinurl%3Afile+java.sun.com&btnI=I%27m%20F</body></html>
