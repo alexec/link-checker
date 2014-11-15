@@ -10,7 +10,10 @@ import java.util.UUID;
 public class LinkChecker {
 
 	public static void main(String[] args) throws Exception {
-
+        if (args.length != 1) {
+            System.err.println("I need a URL to crawl");
+            System.exit(1);
+        }
 
 		CachingConfig cachingConfig = new CachingConfig(
 				Integer.parseInt(System.getProperty("crawler.cacheTime", "300000")),
@@ -19,7 +22,7 @@ public class LinkChecker {
 				))
 		);
 
-		new Crawler(cachingConfig, new URI(args[0])).call();
+        new Crawler(cachingConfig, new URI(args[0]), new Reporter()).crawl();
 
 	}
 }

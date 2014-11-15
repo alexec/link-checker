@@ -16,172 +16,169 @@ import java.util.concurrent.*;
 /**
  * @author alexec (alex.e.c@gmail.com)
  */
-public class Crawler implements Callable<Void> {
-	private final ExecutorService executorService = Executors.newFixedThreadPool(
-			Runtime.getRuntime().availableProcessors() * 2
-	);
-	private final CompletionService<Void> completionService = new ExecutorCompletionService<Void>(executorService);
+public class Crawler {
+    private final ExecutorService executorService = Executors.newFixedThreadPool(
+            Runtime.getRuntime().availableProcessors()
+    );
+    private final CompletionService<Void> completionService = new ExecutorCompletionService<Void>(executorService);
 	private final Set<Future<Void>> futures = Collections.synchronizedSet(new HashSet<Future<Void>>());
 	private final Set<URI> uris = Collections.synchronizedSet(new HashSet<URI>());
 	private final Map<URI, Set<URI>> toFrom = Collections.synchronizedMap(new HashMap<URI, Set<URI>>());
 	private final CachingConfig cachingConfig;
 	private final URI home;
+    private final Reporter reporter;
+    private int complete = 0;
+    private int total = 0;
 
-	public Crawler(CachingConfig cachingConfig, URI home) {
-		this.cachingConfig = cachingConfig;
-		this.home = home;
-	}
+    public Crawler(CachingConfig cachingConfig, URI home, Reporter reporter) {
+        this.cachingConfig = cachingConfig;
+        this.home = home;
+        this.reporter = reporter;
+    }
 
-	public Void call() throws Exception {
+    private static boolean isCrawlable(final URI uri) {
+        return uri.getFragment() == null &&
+                !uri.getHost().equals("www.google.com");
+    }
 
-		if (!cachingConfig.getDir().exists()) {
-			if (!cachingConfig.getDir().mkdir()) {
-				throw new IllegalStateException("failed to create cache dir " + cachingConfig.getDir());
-			}
-			;
-		}
+    private static String readPage(final InputStream inputStream) throws IOException {
+        BufferedReader in = new BufferedReader(new InputStreamReader(inputStream));
 
-		final long startTime = System.currentTimeMillis();
-		try {
-			submit(home, null);
+        StringBuilder buffer = new StringBuilder();
+        String l;
+        try {
+            while ((l = in.readLine()) != null) {
+                buffer.append(l).append('\n');
+            }
+        } finally {
+            in.close();
+        }
 
-			while (futures.size() > 0) {
-				final Future<Void> future = completionService.take();
+        return buffer.toString();
+    }
 
-				try {
-					future.get();
-				} catch (Exception e) {
-					e.printStackTrace();
-				}
+	public void crawl() throws Exception {
 
-				futures.remove(future);
-			}
+        if (!cachingConfig.getDir().exists()) {
+            if (!cachingConfig.getDir().mkdir()) {
+                throw new IllegalStateException("failed to create cache dir " + cachingConfig.getDir());
+            }
+        }
+        reporter.started();
 
-		} finally {
-			executorService.shutdown();
-			System.out.println("Done - " + (System.currentTimeMillis() - startTime) + " ms");
-		}
+        try {
+            submit(home, null);
 
-		return null;
-	}
+            while (futures.size() > 0) {
+                final Future<Void> future = completionService.take();
 
-	private void crawl(final URI uri, final URI parent) {
+                try {
+                    future.get();
+                } catch (Exception e) {
+                    reporter.error(e);
+                }
 
-		//System.out.println("crawling " + uri + "...");
+                futures.remove(future);
+                complete++;
+            }
 
-		Document doc;
-		try {
-			doc = Jsoup.parse(getPage(uri), home.toString());
-		} catch (IOException e) {
-			System.err.println(parent + ": failed to process link " + uri + ": " + e);
-			return;
-		}
+        } finally {
+            executorService.shutdown();
+            reporter.finished();
+        }
+    }
 
-		if (!isOnSite(uri)) {
-			return;
-		}
+    private void crawl(final URI uri, final URI parent) {
 
-		Elements links = doc.select("a[href]");
+        reporter.crawling(uri, complete, total);
+        Document doc;
+        try {
+            doc = Jsoup.parse(getPage(uri), home.toString());
+        } catch (IOException e) {
+            reporter.brokenLink(parent, uri, e);
+            return;
+        }
 
-		for (Element link : links) {
-			final String attr = link.attr("abs:href");
-			final URI href;
-			try {
-				href = new URI(attr);
-			} catch (URISyntaxException e) {
-				System.err.println(uri + " broken link to " + attr + ": " + e);
-				continue;
-			}
+        if (!isOnSite(uri)) {
+            return;
+        }
 
-			if (!isCrawlable(href)) {
-				continue;
-			}
+        Elements links = doc.select("a[href]");
 
-			synchronized (toFrom) {
-				if (!toFrom.containsKey(href)) {
-					toFrom.put(href, new HashSet<URI>());
-				}
+        for (Element link : links) {
+            final String attr = link.attr("abs:href");
+            final URI href;
+            try {
+                href = new URI(attr);
+            } catch (URISyntaxException e) {
+                reporter.badLinkSyntax(uri, attr, e);
+                continue;
+            }
 
-				toFrom.get(href).add(uri);
-			}
+            if (!isCrawlable(href)) {
+                continue;
+            }
 
-			submit(href, uri);
-		}
-	}
+            synchronized (toFrom) {
+                if (!toFrom.containsKey(href)) {
+                    toFrom.put(href, new HashSet<URI>());
+                }
 
-	private void submit(final URI uri, final URI parent) {
+                toFrom.get(href).add(uri);
+            }
 
+            submit(href, uri);
+        }
+    }
 
-		synchronized (uris) {
-			if (uris.contains(uri)) {
-				return;
-			}
+    private void submit(final URI uri, final URI parent) {
 
-			uris.add(uri);
-		}
+        synchronized (uris) {
+            if (uris.contains(uri)) {
+                return;
+            }
 
-		synchronized (futures) {
-			futures.add(completionService.submit(new Callable<Void>() {
-				@Override
-				public Void call() throws Exception {
-					crawl(uri, parent);
-					return null;
-				}
-			}));
-		}
-	}
+            uris.add(uri);
+        }
+
+        synchronized (futures) {
+            total++;
+            futures.add(completionService.submit(new Callable<Void>() {
+                @Override
+                public Void call() throws Exception {
+                    crawl(uri, parent);
+                    return null;
+                }
+            }));
+        }
+    }
 
 	private boolean isOnSite(final URI href) {
-		return home.getHost().equals(href.getHost());
-	}
+        return home.getHost().equals(href.getHost());
+    }
 
-	private static boolean isCrawlable(final URI uri) {
-		return uri.getFragment() == null &&
-				!uri.getHost().equals("www.google.com") &&
-				!uri.getHost().equals("localhost");
-	}
+    private String getPage(final URI uri) throws IOException {
+        File f = new File(cachingConfig.getDir(), URLEncoder.encode(uri.toString(), "UTF-8"));
 
-	private String getPage(final URI uri) throws IOException {
-		File f = new File(cachingConfig.getDir(), URLEncoder.encode(uri.toString(), "UTF-8"));
+        final String page;
+        if (!f.exists() || f.lastModified() < System.currentTimeMillis() - cachingConfig.getTime()) {
 
-		final String page;
-		if (!f.exists() || f.lastModified() < System.currentTimeMillis() - cachingConfig.getTime()) {
+            // get URI
+            final URLConnection connection = uri.toURL().openConnection();
+            connection.connect();
 
-			// get URI
-			final URLConnection connection = uri.toURL().openConnection();
-			connection.connect();
+            page = readPage(connection.getInputStream());
 
-			page = readPage(connection.getInputStream());
+            PrintWriter out = new PrintWriter(new FileWriter(f));
+            try {
+                out.write(page);
+            } finally {
+                out.close();
+            }
+        } else {
+            page = readPage(new FileInputStream(f));
+        }
 
-			PrintWriter out = new PrintWriter(new FileWriter(f));
-			try {
-				out.write(page);
-			} finally {
-				out.close();
-			}
-
-			//System.out.println("cached " + f);
-		} else {
-			page = readPage(new FileInputStream(f));
-			//System.out.println("cache hit " + f);
-		}
-
-		return page;
-	}
-
-	private static String readPage(final InputStream inputStream) throws IOException {
-		BufferedReader in = new BufferedReader(new InputStreamReader(inputStream));
-
-		StringBuilder buffer = new StringBuilder();
-		String l;
-		try {
-			while ((l = in.readLine()) != null) {
-				buffer.append(l).append('\n');
-			}
-		} finally {
-			in.close();
-		}
-
-		return buffer.toString();
-	}
+        return page;
+    }
 }
